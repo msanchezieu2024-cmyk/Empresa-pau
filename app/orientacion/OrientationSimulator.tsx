@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Check, Compass, ExternalLink, GraduationCap, Info, RefreshCw, RotateCcw, Sparkles, Target, X } from 'lucide-react'
+import { ArrowRight, BookOpen, Check, Compass, ExternalLink, GraduationCap, Info, RefreshCw, RotateCcw, Sparkles, Target, X } from 'lucide-react'
 import SidebarNav from '@/app/components/SidebarNav'
 import ClayThemeScope from '@/components/clay/ClayThemeScope'
 import { useClayThemePreference } from '@/components/clay/useClayThemePreference'
@@ -343,28 +343,39 @@ export default function OrientationSimulator() {
   } as const
 
   const pct = (value: number) => Math.max(0, Math.min(100, ((value - 5) / 9) * 100))
-  const heroTitle = target ? `${target.degree} · ${target.university}` : savedTarget ? `${savedTarget.degree} · ${savedTarget.university}` : 'Todavía no has elegido objetivo'
-  const heroMeta = target
-    ? `${pathDefinition.shortLabel} · ${target.referenceLabel}`
-    : savedTarget ? 'Elige un grado para volver a simular tu nota.' : 'Elige un grado y una oferta oficial para empezar a simular.'
   const statusPositive = calculation.complete && difference >= 0
   const statusHeadline = calculation.complete
     ? difference >= 0 ? `Por encima de la referencia · +${formatGrade(difference)}` : `Te faltan ${formatGrade(Math.abs(difference))} puntos`
     : 'Completa los requisitos de tu vía'
 
+  const TABS = [
+    { id: 'objetivo', label: 'Mi objetivo', Icon: Target },
+    { id: 'universidades', label: 'Explorar grados', Icon: GraduationCap },
+    { id: 'correccion', label: 'Cómo se corrige', Icon: BookOpen },
+  ] as const
+
   return (
     <ClayThemeScope theme={clayTheme} className={styles.appShell}>
       <SidebarNav />
-      <main className={styles.page}>
-        <header className={styles.header}>
-          <div><div className={styles.eyebrow}><Compass size={14} /> Orientación</div><h1>{headings[activeTab][0]}</h1><p>{headings[activeTab][1]}</p></div>
-          {activeTab === 'objetivo' && <button className={styles.methodButton} onClick={() => setShowMethod(true)}><Info size={17} /> ¿Cómo se calcula?</button>}
-        </header>
+      <div className={styles.column}>
+        {/* Hero a sangre con el mismo tratamiento que La Zona y Simulacros */}
+        <div className={styles.heroBand}>
+          <img className={styles.heroImage} src={ORIENTATION_HERO_IMG} alt="" loading="eager" />
+          <div className={styles.heroOverlay}>
+            <div>
+              <div className={styles.heroEyebrow}><Compass size={11} /> Kairo · Orientación universitaria</div>
+              <h1 className={styles.heroTitle}>{headings[activeTab][0]}</h1>
+              <p className={styles.heroCaption}>{headings[activeTab][1]}</p>
+            </div>
+          </div>
+        </div>
 
         <nav className={styles.tabs} aria-label="Secciones de Orientación">
-          {([['objetivo', 'Mi objetivo'], ['universidades', 'Explorar grados'], ['correccion', 'Cómo se corrige']] as const).map(([id, label]) => <button key={id} aria-current={activeTab === id ? 'page' : undefined} onClick={() => setActiveTab(id)}>{label}</button>)}
+          {TABS.map(({ id, label, Icon }) => <button key={id} aria-current={activeTab === id ? 'page' : undefined} onClick={() => setActiveTab(id)}><Icon size={13} /> {label}</button>)}
+          {activeTab === 'objetivo' && <button className={styles.methodButton} onClick={() => setShowMethod(true)}><Info size={15} /> ¿Cómo se calcula?</button>}
         </nav>
 
+      <main className={styles.page}>
         <section className={styles.communityBar} aria-label="Comunidad del catálogo">
           <div><small>COMUNIDAD</small><b>Consulta el sistema que te corresponde</b></div>
           <div className={styles.communitySwitch} role="group" aria-label="Selecciona comunidad">
@@ -378,27 +389,11 @@ export default function OrientationSimulator() {
           <div className={styles.savedElsewhere}><Info size={15} /> Tu objetivo guardado está en {normalizeOrientationCommunity(savedTarget.community)}. Puedes explorar {community} sin sustituirlo.</div>
         )}
 
-        {activeTab === 'objetivo' && (
-          <section className={styles.heroBand} aria-label="Objetivo actual">
-            <img className={styles.heroImage} src={ORIENTATION_HERO_IMG} alt="" loading="eager" />
-            <div className={styles.heroOverlay}>
-              {/* El <small> y el título comparten padre a propósito: e2e/orientation.spec.ts
-                  localiza el texto exacto "Objetivo guardado" y comprueba que su elemento
-                  padre contenga el grado y la universidad guardados. */}
-              <div className={styles.heroCopy}>
-                <Target size={13} />
-                <small className={styles.heroEyebrow}>{savedTarget ? 'Objetivo guardado' : 'Tu objetivo'}</small>
-                <span className={styles.heroCommunity}>· {community}</span>
-                <h2 className={styles.heroTitle}>{heroTitle}</h2>
-                <p className={styles.heroMeta}>{heroMeta}</p>
-              </div>
-              {savedTarget && (
-                <div className={styles.heroActions}>
-                  <strong>{formatReference(savedTarget.admissionScore)}</strong>
-                  <button onClick={() => { setSelectedDegreeKey(''); setTargetId(''); setSubjectsByPath(createEmptySubjectsByPath()); markStateChanged() }}>Cambiar</button>
-                </div>
-              )}
-            </div>
+        {activeTab === 'objetivo' && savedTarget && (
+          <section className={styles.savedTarget}>
+            <div><Check size={16} /><span><small>Objetivo guardado</small><b>{savedTarget.degree} · {savedTarget.university}</b></span></div>
+            <strong>{formatReference(savedTarget.admissionScore)}</strong>
+            <button onClick={() => { setSelectedDegreeKey(''); setTargetId(''); setSubjectsByPath(createEmptySubjectsByPath()); markStateChanged() }}>Cambiar</button>
           </section>
         )}
 
@@ -417,7 +412,7 @@ export default function OrientationSimulator() {
                   <div className={styles.goalChart} aria-label={`Tu nota estimada es ${formatGrade(score)} sobre 14; referencia ${formatReference(target.referenceScore)}`}>
                     <div className={styles.chartLabels}><span>5</span><span>14</span></div>
                     <div className={styles.track}>
-                      <div className={styles.trackFill} style={{ width: `${pct(score)}%` }} />
+                      <div className={styles.trackFill} style={{ '--fill': pct(score) / 100 } as React.CSSProperties} />
                       <div className={`${styles.marker} ${styles.yourMarker}`} style={{ left: `${pct(score)}%` }}><span>Tú</span></div>
                       <div className={`${styles.marker} ${styles.targetMarker}`} style={{ left: `${pct(target.referenceScore)}%` }}><span>Meta</span></div>
                     </div>
@@ -429,7 +424,7 @@ export default function OrientationSimulator() {
             )}
 
             <div className={styles.workspace}>
-              <nav aria-label="Pasos para definir tu objetivo">
+              <nav className={styles.railColumn} aria-label="Pasos para definir tu objetivo">
                 <ol className={styles.stepRail}>
                   <li className={styles.flowActive}><a href="#paso-1"><b>1</b><span>Elige objetivo</span></a></li>
                   <li className={target ? styles.flowActive : ''}><a href="#paso-2"><b>2</b><span>Ajusta notas</span></a></li>
@@ -487,6 +482,7 @@ export default function OrientationSimulator() {
           </>
         )}
       </main>
+      </div>
 
       {showMethod && <div className={styles.modalBackdrop} role="presentation" onMouseDown={event => event.target === event.currentTarget && setShowMethod(false)}><section className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="method-title"><button className={styles.closeButton} aria-label="Cerrar" onClick={() => setShowMethod(false)}><X size={19} /></button><div className={styles.modalIcon}><Info size={22} /></div><h2 id="method-title">¿Cómo se calcula {pathDefinition.shortLabel}?</h2><p>{pathDefinition.officialSummary}</p><div className={styles.formula}>{calculation.formulaParts.map((part, index) => <div key={`${part.value}-${index}`}><b>{part.value}</b><span>{part.label}</span></div>)}</div><div className={styles.modalNotice}><Info size={17} /><span>Las referencias históricas orientan, pero no garantizan admisión. La acreditación oficial siempre prevalece sobre la simulación.</span></div></section></div>}
     </ClayThemeScope>
