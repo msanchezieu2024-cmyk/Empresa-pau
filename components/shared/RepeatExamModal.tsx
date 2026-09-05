@@ -90,6 +90,8 @@ export default function RepeatExamModal({ source, onClose, onDone }: {
         body: JSON.stringify({
           subject: source.asignatura,
           examLabel: source.bloque || source.asignatura,
+          exerciseId: source.id,
+          exerciseLabel: source.bloque || source.asignatura,
           maxScore,
           officialPrompt: source.enunciado,
           studentAnswer: modo === 'imagen'

@@ -168,6 +168,8 @@ async function handlePost(request: NextRequest) {
     option: option || null,
     year: body.year ?? null,
     examCall: asString(body.examCall) || null,
+    exerciseId: asString(body.exerciseId) || null,
+    exerciseLabel: asString(body.exerciseLabel) || null,
     hasImage: allImages.length > 0,
     imageCount: allImages.length,
     imagePayloadChars,
