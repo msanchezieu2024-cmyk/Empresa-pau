@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Check, Compass, ExternalLink, GraduationCap, Info, RefreshCw, RotateCcw, Sparkles, Target, X } from 'lucide-react'
 import SidebarNav from '@/app/components/SidebarNav'
+import ClayThemeScope from '@/components/clay/ClayThemeScope'
+import { useClayThemePreference } from '@/components/clay/useClayThemePreference'
 import { supabase } from '@/app/lib/supabase'
 import { calculateAccessPathScore } from './access-paths/calculation'
 import AccessPathInputs from './access-paths/AccessPathInputs'
@@ -22,6 +24,10 @@ import { createOrientationState, mergeStoredSubjectInputs, orientationStateConte
 import TargetCombobox from './TargetCombobox'
 import UniversityExplorer from './UniversityExplorer'
 import styles from './orientation.module.css'
+
+// Misma imagen Higgsfield que la ficha de tema de Camino: Orientación entra en
+// la misma familia visual que el resto del interior.
+const ORIENTATION_HERO_IMG = 'https://d8j0ntlcm91z4.cloudfront.net/user_3FE1qfsmGuEldtlzta7SsGkWNIV/hf_20260727_125450_f5670e8f-277d-470e-82b0-58dd6db26d4b.png'
 
 const formatGrade = (value: number) => value.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const formatReference = (value: number) => value.toLocaleString('es-ES', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
@@ -56,6 +62,7 @@ export default function OrientationSimulator() {
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [catalogAvailable, setCatalogAvailable] = useState<boolean | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
+  const { theme: clayTheme } = useClayThemePreference()
 
   const targets = useMemo(() => availableCatalogTargets(officialTargets, ORIENTATION_FIXTURES, catalogAvailable === true), [officialTargets, catalogAvailable])
   const target = targets.find(item => item.id === targetId) ?? null
@@ -335,8 +342,18 @@ export default function OrientationSimulator() {
     correccion: ['Cómo se corrige', 'Baremos oficiales explicados sin mezclar fuente e interpretación.'],
   } as const
 
+  const pct = (value: number) => Math.max(0, Math.min(100, ((value - 5) / 9) * 100))
+  const heroTitle = target ? `${target.degree} · ${target.university}` : savedTarget ? `${savedTarget.degree} · ${savedTarget.university}` : 'Todavía no has elegido objetivo'
+  const heroMeta = target
+    ? `${pathDefinition.shortLabel} · ${target.referenceLabel}`
+    : savedTarget ? 'Elige un grado para volver a simular tu nota.' : 'Elige un grado y una oferta oficial para empezar a simular.'
+  const statusPositive = calculation.complete && difference >= 0
+  const statusHeadline = calculation.complete
+    ? difference >= 0 ? `Por encima de la referencia · +${formatGrade(difference)}` : `Te faltan ${formatGrade(Math.abs(difference))} puntos`
+    : 'Completa los requisitos de tu vía'
+
   return (
-    <div className={styles.appShell}>
+    <ClayThemeScope theme={clayTheme} className={styles.appShell}>
       <SidebarNav />
       <main className={styles.page}>
         <header className={styles.header}>
@@ -361,63 +378,117 @@ export default function OrientationSimulator() {
           <div className={styles.savedElsewhere}><Info size={15} /> Tu objetivo guardado está en {normalizeOrientationCommunity(savedTarget.community)}. Puedes explorar {community} sin sustituirlo.</div>
         )}
 
-        {activeTab === 'objetivo' && savedTarget && (
-          <section className={styles.savedTarget}>
-            <div><Check size={16} /><span><small>Objetivo guardado</small><b>{savedTarget.degree} · {savedTarget.university}</b></span></div>
-            <strong>{formatReference(savedTarget.admissionScore)}</strong>
-            <button onClick={() => { setSelectedDegreeKey(''); setTargetId(''); setSubjectsByPath(createEmptySubjectsByPath()); markStateChanged() }}>Cambiar</button>
+        {activeTab === 'objetivo' && (
+          <section className={styles.heroBand} aria-label="Objetivo actual">
+            <img className={styles.heroImage} src={ORIENTATION_HERO_IMG} alt="" loading="eager" />
+            <div className={styles.heroOverlay}>
+              {/* El <small> y el título comparten padre a propósito: e2e/orientation.spec.ts
+                  localiza el texto exacto "Objetivo guardado" y comprueba que su elemento
+                  padre contenga el grado y la universidad guardados. */}
+              <div className={styles.heroCopy}>
+                <Target size={13} />
+                <small className={styles.heroEyebrow}>{savedTarget ? 'Objetivo guardado' : 'Tu objetivo'}</small>
+                <span className={styles.heroCommunity}>· {community}</span>
+                <h2 className={styles.heroTitle}>{heroTitle}</h2>
+                <p className={styles.heroMeta}>{heroMeta}</p>
+              </div>
+              {savedTarget && (
+                <div className={styles.heroActions}>
+                  <strong>{formatReference(savedTarget.admissionScore)}</strong>
+                  <button onClick={() => { setSelectedDegreeKey(''); setTargetId(''); setSubjectsByPath(createEmptySubjectsByPath()); markStateChanged() }}>Cambiar</button>
+                </div>
+              )}
+            </div>
           </section>
         )}
 
         {activeTab === 'universidades' ? <UniversityExplorer targets={officialTargets} estimatedScore={calculation.complete ? score : null} loadState={loadState} onRetry={retryLoad} /> : activeTab === 'correccion' ? <CorrectionGuide community={community} databaseCriteria={criteria} /> : (
           <>
-            <ol className={styles.flowRail} aria-label="Pasos para definir tu objetivo"><li className={styles.flowActive}><b>1</b><span>Elige objetivo</span></li><li className={target ? styles.flowActive : ''}><b>2</b><span>Ajusta notas</span></li><li className={target ? styles.flowActive : ''}><b>3</b><span>Decide qué mejorar</span></li><li><b>4</b><span>Llévalo a Camino</span></li></ol>
-            <section className={styles.targetPicker}>
-              <div className={styles.pickerTitle}><Target size={20} /><div><small>PASO 1</small><b>Define tu objetivo</b><span>Elige el grado y después la oferta oficial donde quieres estudiarlo.</span></div></div>
-              {stateReady && (
-                <div className={styles.autosaveIndicator} data-state={authenticated ? autosaveStatus : 'local'} aria-live="polite">
-                  {!authenticated ? 'Guardado en este dispositivo' : autosaveStatus === 'saving' ? 'Guardando cambios…' : autosaveStatus === 'error' ? <><span>Cambios pendientes</span><button type="button" onClick={() => autosaveRef.current?.retry()}><RefreshCw size={11} /> Reintentar</button></> : autosaveStatus === 'saved' ? <><Check size={11} /> Guardado</> : 'Sin cambios pendientes'}
+            {target && (
+              <section className={styles.scoreBar} aria-live="polite" aria-label="Tu distancia al objetivo">
+                <div className={styles.scoreDial} style={{ '--dial': calculation.complete ? pct(score) / 100 : 0 } as React.CSSProperties}><span className={styles.scoreDialInner}><Target size={16} /></span></div>
+                <div className={styles.scoreNow}>
+                  <span>Tu nota</span>
+                  <b key={`${accessPath}-${score}`}>{calculation.complete ? <>{formatGrade(score)}<small> / 14</small></> : 'Pendiente'}</b>
+                  <small>{calculation.complete ? `${formatGrade(calculation.baseScore)} base + ${formatGrade(calculation.weightedPoints)} admisión` : 'Falta completar tu vía'}</small>
                 </div>
-              )}
-              {loadState === 'loading' ? <div className={styles.selectSkeleton} /> : <TargetCombobox targets={targets} selectedId={targetId} selectedDegreeKey={selectedDegreeKey} onDegreeSelect={chooseDegree} onSelect={selectTarget} />}
-              <AccessPathSelector value={accessPath} onChange={pathId => { setAccessPath(pathId); setSaveState('idle'); markStateChanged() }} />
-            </section>
-            {catalogAvailable === false && <div className={styles.fallbackNotice}><Info size={15} /><span>No se pudo leer el catálogo verificado. No mostraremos datos demo hasta poder confirmar la fuente oficial.</span><button onClick={retryLoad}><RefreshCw size={13} /> Reintentar</button></div>}
-
-            {!target ? <section className={styles.emptyState}><div><Target size={29} /></div><h2>Empieza por un grado.</h2><p>En cuanto lo elijas verás la referencia, tu escenario y el cambio con más impacto.</p></section> : (
-              <>
-                <div className={styles.simulatorGrid}>
-                  <section className={styles.controlsPanel}>
-                    <div className={styles.sectionHeading}><div><span>PASO 2 · SIMULACIÓN</span><h2>Ajusta tu escenario</h2></div><button onClick={resetScenario}><RotateCcw size={15} /> Restablecer</button></div>
-                    <AccessPathInputs community={community} scenario={scenario} onChange={updateScenario} />
-                    <div className={styles.subjectsHeading}><div><b>Materias que pueden subir tu nota</b><span>Solo cuentan las dos mejores aportaciones aprobadas, activas y válidas para tu vía.</span></div></div>
-                    {subjects.length ? <>{visibleSubjects.map(renderSubject)}{secondarySubjects.length > 0 && <details className={styles.secondarySubjects}><summary>Ver {secondarySubjects.length} materias con menor ponderación</summary>{secondarySubjects.map(renderSubject)}</details>}</> : <p className={styles.noWeightings}>No hay ponderaciones verificadas para este objetivo.</p>}
-                  </section>
-
-                  <aside className={styles.resultPanel} aria-live="polite">
-                    <div className={styles.resultTitle}><span>TU DISTANCIA AL OBJETIVO</span><div className={styles.liveDot} /> En vivo</div>
-                    <div className={styles.scoreComparison}><div><span>Necesitas como referencia</span><b>{formatReference(target.referenceScore)}</b><small>{target.referenceLabel}</small></div><div className={styles.primaryScore}><span>Con tu nota actual</span><b key={`${accessPath}-${score}`}>{calculation.complete ? <>{formatGrade(score)} <small>/ 14</small></> : 'Pendiente'}</b><small>{calculation.complete ? `${formatGrade(calculation.baseScore)} base + ${formatGrade(calculation.weightedPoints)} admisión` : 'Falta completar tu vía'}</small></div></div>
-                    {calculation.complete && <div className={styles.goalChart} aria-label={`Tu nota estimada es ${formatGrade(score)} sobre 14; referencia ${formatReference(target.referenceScore)}`}><div className={styles.chartLabels}><span>5</span><span>14</span></div><div className={styles.track}><div className={styles.trackFill} style={{ width: `${Math.max(0, Math.min(100, ((score - 5) / 9) * 100))}%` }} /><div className={`${styles.marker} ${styles.yourMarker}`} style={{ left: `${Math.max(0, Math.min(100, ((score - 5) / 9) * 100))}%` }}><span>Tú</span></div><div className={`${styles.marker} ${styles.targetMarker}`} style={{ left: `${Math.max(0, Math.min(100, ((target.referenceScore - 5) / 9) * 100))}%` }}><span>Meta</span></div></div></div>}
-                    <div className={`${styles.status} ${calculation.complete && difference >= 0 ? styles.positive : ''}`}>{calculation.complete && difference >= 0 ? <Check size={19} /> : <Target size={19} />}<div><b>{calculation.complete ? difference >= 0 ? `Por encima de la referencia · +${formatGrade(difference)}` : `Te faltan ${formatGrade(Math.abs(difference))} puntos` : 'Completa los requisitos de tu vía'}</b><span>{calculation.incompleteReason ?? 'Es una simulación, no una garantía de admisión.'}</span></div></div>
-                    {target.source.type === 'official' && target.source.url && <a className={styles.sourceLink} href={target.source.url} target="_blank" rel="noreferrer">OFICIAL · {target.source.label} <ExternalLink size={13} /></a>}
-                    <div className={styles.recommendations}><div><span>PASO 3 · QUÉ MEJORAR</span><Sparkles size={17} /></div>{recommendations.length ? recommendations.map(item => <div className={styles.recommendation} key={item.id}><div><b>{item.name}</b><span>Si subes {formatGrade(item.defaultGrade)} → {formatGrade(item.nextGrade)}</span></div><strong>+{formatGrade(item.gain)}</strong></div>) : <p>Activa o ajusta una materia para comparar el impacto.</p>}</div>
-                    <button className={`${styles.caminoCta} kairo-clay-action`} onClick={saveAndOpenCamino} disabled={saveState === 'saving'}><span><small>PASO 4</small>{saveState === 'saving' ? 'Guardando…' : savedTarget ? 'Actualizar objetivo en Camino' : 'Guardar y usar en Camino'}</span><ArrowRight size={20} /></button>
-                    {saveState === 'error' && <p className={styles.saveError}>No se pudo guardar. Revisa tu sesión y vuelve a intentarlo.</p>}
-                  </aside>
-                </div>
-
-                {calculation.complete && <section className={styles.alternatives} aria-label="Alternativas con tu nota actual">
-                  <div className={styles.alternativesHeading}><div><span>PASO 5 · ALTERNATIVAS</span><h2>Opciones cerca de tu escenario</h2><p>Referencias ordenadas por distancia a tu nota actual.</p></div><button onClick={() => setActiveTab('universidades')}>Explorar {officialTargets.length} <ArrowRight size={14} /></button></div>
-                  <div className={styles.alternativeGrid}>{alternatives.map(item => { const category = classifyOpportunity(score, item.referenceScore); return <article key={item.id}><div><GraduationCap size={16} /><span>{category === 'above' ? 'Por encima' : category === 'close' ? 'Cerca' : 'Por debajo'}</span></div><h3>{item.degree}</h3><p>{item.universityAcronym ?? item.university}</p><strong>{formatReference(item.referenceScore)}</strong></article> })}</div>
-                  <p className={styles.opportunityDisclaimer}>Las notas de corte son históricas y pueden variar. Estar por encima no garantiza la admisión.</p>
-                </section>}
-              </>
+                <div className={styles.scoreRef}><span>Referencia</span><b>{formatReference(target.referenceScore)}</b><small>{target.referenceLabel}</small></div>
+                {calculation.complete ? (
+                  <div className={styles.goalChart} aria-label={`Tu nota estimada es ${formatGrade(score)} sobre 14; referencia ${formatReference(target.referenceScore)}`}>
+                    <div className={styles.chartLabels}><span>5</span><span>14</span></div>
+                    <div className={styles.track}>
+                      <div className={styles.trackFill} style={{ width: `${pct(score)}%` }} />
+                      <div className={`${styles.marker} ${styles.yourMarker}`} style={{ left: `${pct(score)}%` }}><span>Tú</span></div>
+                      <div className={`${styles.marker} ${styles.targetMarker}`} style={{ left: `${pct(target.referenceScore)}%` }}><span>Meta</span></div>
+                    </div>
+                  </div>
+                ) : <p className={styles.scoreBarPending}>{calculation.incompleteReason ?? 'Completa los requisitos de tu vía para ver la distancia.'}</p>}
+                <span className={`${styles.scorePill} ${statusPositive ? styles.positive : ''}`}>{statusPositive ? <Check size={15} /> : <Target size={15} />} {statusHeadline}</span>
+                <a className={styles.scoreCta} href="#paso-4">Llevar a Camino <ArrowRight size={15} /></a>
+              </section>
             )}
+
+            <div className={styles.workspace}>
+              <nav aria-label="Pasos para definir tu objetivo">
+                <ol className={styles.stepRail}>
+                  <li className={styles.flowActive}><a href="#paso-1"><b>1</b><span>Elige objetivo</span></a></li>
+                  <li className={target ? styles.flowActive : ''}><a href="#paso-2"><b>2</b><span>Ajusta notas</span></a></li>
+                  <li className={target ? styles.flowActive : ''}><a href="#paso-3"><b>3</b><span>Qué mejorar</span></a></li>
+                  <li className={target ? styles.flowActive : ''}><a href="#paso-4"><b>4</b><span>Llévalo a Camino</span></a></li>
+                  <li className={target && calculation.complete ? styles.flowActive : ''}><a href="#paso-5"><b>5</b><span>Alternativas</span></a></li>
+                </ol>
+                <p className={styles.railNote}><Info size={14} /><span>Simulación orientativa: no garantiza la admisión.</span></p>
+              </nav>
+
+              <div className={styles.stack}>
+                <section className={styles.targetPicker} id="paso-1">
+                  <div className={styles.pickerTitle}><Target size={20} /><div><small>PASO 1</small><b>Define tu objetivo</b><span>Elige el grado y después la oferta oficial donde quieres estudiarlo.</span></div></div>
+                  {stateReady && (
+                    <div className={styles.autosaveIndicator} data-state={authenticated ? autosaveStatus : 'local'} aria-live="polite">
+                      {!authenticated ? 'Guardado en este dispositivo' : autosaveStatus === 'saving' ? 'Guardando cambios…' : autosaveStatus === 'error' ? <><span>Cambios pendientes</span><button type="button" onClick={() => autosaveRef.current?.retry()}><RefreshCw size={11} /> Reintentar</button></> : autosaveStatus === 'saved' ? <><Check size={11} /> Guardado</> : 'Sin cambios pendientes'}
+                    </div>
+                  )}
+                  {loadState === 'loading' ? <div className={styles.selectSkeleton} /> : <TargetCombobox targets={targets} selectedId={targetId} selectedDegreeKey={selectedDegreeKey} onDegreeSelect={chooseDegree} onSelect={selectTarget} />}
+                  <AccessPathSelector value={accessPath} onChange={pathId => { setAccessPath(pathId); setSaveState('idle'); markStateChanged() }} />
+                </section>
+                {catalogAvailable === false && <div className={styles.fallbackNotice}><Info size={15} /><span>No se pudo leer el catálogo verificado. No mostraremos datos demo hasta poder confirmar la fuente oficial.</span><button onClick={retryLoad}><RefreshCw size={13} /> Reintentar</button></div>}
+
+                {!target ? <section className={styles.emptyState}><div><Target size={29} /></div><h2>Empieza por un grado.</h2><p>En cuanto lo elijas verás la referencia, tu escenario y el cambio con más impacto.</p></section> : (
+                  <>
+                    <section className={styles.controlsPanel} id="paso-2">
+                      <div className={styles.sectionHeading}><div><span>PASO 2 · SIMULACIÓN</span><h2>Ajusta tu escenario</h2></div><button onClick={resetScenario}><RotateCcw size={15} /> Restablecer</button></div>
+                      <AccessPathInputs community={community} scenario={scenario} onChange={updateScenario} />
+                      <div className={styles.subjectsHeading}><div><b>Materias que pueden subir tu nota</b><span>Solo cuentan las dos mejores aportaciones aprobadas, activas y válidas para tu vía.</span></div></div>
+                      {subjects.length ? <>{visibleSubjects.map(renderSubject)}{secondarySubjects.length > 0 && <details className={styles.secondarySubjects}><summary>Ver {secondarySubjects.length} materias con menor ponderación</summary>{secondarySubjects.map(renderSubject)}</details>}</> : <p className={styles.noWeightings}>No hay ponderaciones verificadas para este objetivo.</p>}
+                    </section>
+
+                    <section className={styles.recommendations} id="paso-3" aria-live="polite">
+                      <div><span>PASO 3 · QUÉ MEJORAR</span><Sparkles size={17} /></div>
+                      <div className={`${styles.status} ${statusPositive ? styles.positive : ''}`}>{statusPositive ? <Check size={19} /> : <Target size={19} />}<div><b>{statusHeadline}</b><span>{calculation.incompleteReason ?? 'Es una simulación, no una garantía de admisión.'}</span></div></div>
+                      {target.source.type === 'official' && target.source.url && <a className={styles.sourceLink} href={target.source.url} target="_blank" rel="noreferrer">OFICIAL · {target.source.label} <ExternalLink size={13} /></a>}
+                      {recommendations.length ? recommendations.map(item => <div className={styles.recommendation} key={item.id}><div><b>{item.name}</b><span>Si subes {formatGrade(item.defaultGrade)} → {formatGrade(item.nextGrade)}</span></div><strong>+{formatGrade(item.gain)}</strong></div>) : <p>Activa o ajusta una materia para comparar el impacto.</p>}
+                    </section>
+
+                    <section className={styles.caminoCard} id="paso-4">
+                      <div><span>Paso 4</span><h2>Llévalo a Camino</h2><p>Guardamos este objetivo y ajustamos tu plan de estudio a esta meta.</p></div>
+                      <button className={`${styles.caminoCta} kairo-clay-action`} onClick={saveAndOpenCamino} disabled={saveState === 'saving'}><span><small>PASO 4</small>{saveState === 'saving' ? 'Guardando…' : savedTarget ? 'Actualizar objetivo en Camino' : 'Guardar y usar en Camino'}</span><ArrowRight size={20} /></button>
+                      {saveState === 'error' && <p className={styles.saveError}>No se pudo guardar. Revisa tu sesión y vuelve a intentarlo.</p>}
+                    </section>
+
+                    {calculation.complete && <section className={styles.alternatives} id="paso-5" aria-label="Alternativas con tu nota actual">
+                      <div className={styles.alternativesHeading}><div><span>PASO 5 · ALTERNATIVAS</span><h2>Opciones cerca de tu escenario</h2><p>Referencias ordenadas por distancia a tu nota actual.</p></div><button onClick={() => setActiveTab('universidades')}>Explorar {officialTargets.length} <ArrowRight size={14} /></button></div>
+                      <div className={styles.alternativeGrid}>{alternatives.map(item => { const category = classifyOpportunity(score, item.referenceScore); return <article key={item.id}><div><GraduationCap size={16} /><span>{category === 'above' ? 'Por encima' : category === 'close' ? 'Cerca' : 'Por debajo'}</span></div><h3>{item.degree}</h3><p>{item.universityAcronym ?? item.university}</p><strong>{formatReference(item.referenceScore)}</strong></article> })}</div>
+                      <p className={styles.opportunityDisclaimer}>Las notas de corte son históricas y pueden variar. Estar por encima no garantiza la admisión.</p>
+                    </section>}
+                  </>
+                )}
+              </div>
+            </div>
           </>
         )}
       </main>
 
       {showMethod && <div className={styles.modalBackdrop} role="presentation" onMouseDown={event => event.target === event.currentTarget && setShowMethod(false)}><section className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="method-title"><button className={styles.closeButton} aria-label="Cerrar" onClick={() => setShowMethod(false)}><X size={19} /></button><div className={styles.modalIcon}><Info size={22} /></div><h2 id="method-title">¿Cómo se calcula {pathDefinition.shortLabel}?</h2><p>{pathDefinition.officialSummary}</p><div className={styles.formula}>{calculation.formulaParts.map((part, index) => <div key={`${part.value}-${index}`}><b>{part.value}</b><span>{part.label}</span></div>)}</div><div className={styles.modalNotice}><Info size={17} /><span>Las referencias históricas orientan, pero no garantizan admisión. La acreditación oficial siempre prevalece sobre la simulación.</span></div></section></div>}
-    </div>
+    </ClayThemeScope>
   )
 }
