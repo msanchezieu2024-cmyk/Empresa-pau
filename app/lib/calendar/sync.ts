@@ -6,7 +6,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient } from '@/app/lib/billing/supabase'
 import { subjectLabelFromSlug } from '@/app/lib/camino/caminoCurriculumPlan'
 import { decryptToken, encryptToken } from './tokenCrypto'
-import { CalendarSyncGoneError, type CalendarEvent, type CalendarEventInput } from './types'
+import { CalendarEventNotFoundError, CalendarProviderError, CalendarSyncGoneError, type CalendarEvent, type CalendarEventInput, type CalendarProvider } from './types'
 import { GoogleCalendarProvider, refreshGoogleToken } from './google'
 
 const APP_CALENDAR_SUMMARY = 'Kairo – Estudio'
@@ -71,6 +71,10 @@ function localDateTime(date: string, time: string) {
   return `${date}T${t}:00`
 }
 
+function stableGoogleEventId(missionId: string) {
+  return `kairo${missionId.toLowerCase().replace(/[^0-9a-v]/g, '')}`.slice(0, 1024)
+}
+
 function timeFromDateTime(value: string | undefined | null) {
   if (!value) return null
   const match = value.match(/T(\d{2}:\d{2})/)
@@ -115,15 +119,23 @@ async function providerForConnection(db: SupabaseClient, connection: CalendarCon
   let accessToken = decryptToken(connection.access_token)
   const expiresAt = connection.token_expires_at ? new Date(connection.token_expires_at).getTime() : 0
   if (!accessToken || Date.now() > expiresAt - 60_000) {
-    if (!refreshToken) throw new Error('Google refresh token missing')
-    const refreshed = await refreshGoogleToken(refreshToken)
-    accessToken = refreshed.access_token
-    await db.from('calendar_connections').update({
-      access_token: encryptToken(refreshed.access_token),
-      token_expires_at: new Date(Date.now() + (refreshed.expires_in ?? 3600) * 1000).toISOString(),
-    }).eq('id', connection.id)
+    accessToken = await refreshConnectionAccessToken(db, connection, refreshToken)
   }
-  return new GoogleCalendarProvider(accessToken)
+  return new GoogleCalendarProvider(
+    accessToken,
+    () => refreshConnectionAccessToken(db, connection, refreshToken),
+  )
+}
+
+async function refreshConnectionAccessToken(db: SupabaseClient, connection: CalendarConnection, refreshToken = decryptToken(connection.refresh_token)) {
+  if (!refreshToken) throw new Error('Google Calendar necesita volver a conectarse')
+  const refreshed = await refreshGoogleToken(refreshToken)
+  const { error } = await db.from('calendar_connections').update({
+    access_token: encryptToken(refreshed.access_token),
+    token_expires_at: new Date(Date.now() + (refreshed.expires_in ?? 3600) * 1000).toISOString(),
+  }).eq('id', connection.id)
+  if (error) throw error
+  return refreshed.access_token
 }
 
 async function ensureExternalCalendar(db: SupabaseClient, connection: CalendarConnection) {
@@ -146,6 +158,7 @@ function eventFromMission(mission: CaminoMissionRow): CalendarEventInput | null 
   const start = localDateTime(mission.scheduled_date, mission.start_time)
   const end = localDateTime(mission.scheduled_date, mission.end_time)
   return {
+    id: stableGoogleEventId(mission.id),
     summary: `Kairo: ${title}`,
     description: [
       'Mision de Camino PAU sincronizada desde Kairo.',
@@ -217,14 +230,6 @@ export async function syncKairoMissionsToGoogle(userId: string, db = createServi
   let skippedNoTime = 0
   let failed = 0
   for (const mission of missions) {
-    const eventInput = eventFromMission(mission)
-    if (!eventInput) {
-      skippedNoTime++
-      await db.from('camino_calendar').update({
-        metadata: mergeMetadata(mission.metadata, { calendar_synced: false, calendar_sync_status: 'pending_no_time' }),
-      }).eq('id', mission.id).eq('user_id', userId)
-      continue
-    }
     const { data: linkData } = await db
       .from('calendar_event_links')
       .select('*')
@@ -234,24 +239,119 @@ export async function syncKairoMissionsToGoogle(userId: string, db = createServi
       .eq('entity_id', mission.id)
       .maybeSingle()
     const link = linkData as CalendarEventLink | null
-    let event: CalendarEvent
-    try {
-      event = link?.external_event_id
-        ? await provider.updateEvent(calendarId, link.external_event_id, eventInput)
-        : await provider.createEvent(calendarId, eventInput)
-    } catch {
+    const eventInput = eventFromMission(mission)
+    if (!eventInput) {
       try {
-        event = await provider.createEvent(calendarId, eventInput)
+        if (link?.external_event_id) {
+          await provider.deleteEvent(link.external_calendar_id, link.external_event_id)
+          const { error: deleteLinkError } = await db.from('calendar_event_links').delete().eq('id', link.id)
+          if (deleteLinkError) throw deleteLinkError
+        }
+        skippedNoTime++
+        await db.from('camino_calendar').update({
+          metadata: mergeMetadata(mission.metadata, { calendar_synced: false, calendar_sync_status: 'pending_no_time' }),
+        }).eq('id', mission.id).eq('user_id', userId)
       } catch (error) {
         failed++
         await db.from('camino_calendar').update({
           metadata: mergeMetadata(mission.metadata, { calendar_synced: false, calendar_sync_status: 'error' }),
         }).eq('id', mission.id).eq('user_id', userId)
-        console.warn('[calendar] mission push failed:', error)
-        continue
+        console.warn('[calendar] unscheduled mission cleanup failed:', error)
       }
+      continue
     }
-    await db.from('calendar_event_links').upsert({
+    try {
+      let event: CalendarEvent
+      if (link?.external_event_id) {
+        try {
+          event = await provider.updateEvent(link.external_calendar_id, link.external_event_id, eventInput)
+        } catch (error) {
+          if (!(error instanceof CalendarEventNotFoundError)) throw error
+          event = await createOrRecoverMissionEvent(provider, calendarId, eventInput)
+        }
+      } else {
+        event = await createOrRecoverMissionEvent(provider, calendarId, eventInput)
+      }
+      const { error: linkError } = await db.from('calendar_event_links').upsert({
+        user_id: userId,
+        entity_type: 'mission',
+        entity_id: mission.id,
+        provider: 'google',
+        external_calendar_id: calendarId,
+        external_event_id: event.id,
+        external_etag: event.etag ?? null,
+        last_local_update: mission.updated_at ?? nowISO(),
+        last_external_update: event.updated ?? nowISO(),
+        last_sync_source: 'kairo',
+        last_synced_at: nowISO(),
+        sync_status: 'synced',
+      }, { onConflict: 'user_id,entity_type,entity_id,provider' })
+      if (linkError) throw linkError
+      await db.from('camino_calendar').update({
+        metadata: mergeMetadata(mission.metadata, { calendar_synced: true, calendar_sync_status: 'synced' }),
+        updated_at: mission.updated_at ?? nowISO(),
+      }).eq('id', mission.id).eq('user_id', userId)
+      pushed++
+    } catch (error) {
+      failed++
+      await db.from('camino_calendar').update({
+        metadata: mergeMetadata(mission.metadata, { calendar_synced: false, calendar_sync_status: 'error' }),
+      }).eq('id', mission.id).eq('user_id', userId)
+      console.warn('[calendar] mission push failed:', error)
+    }
+  }
+  await db.from('calendar_connections').update({ last_synced_at: nowISO() }).eq('id', connection.id)
+  return { pushed, skippedNoTime, failed }
+}
+
+export async function syncExistingKairoMissionToGoogle(userId: string, missionId: string, db = createServiceClient()) {
+  const connection = await getConnection(db, userId)
+  if (!connection || !connection.sync_enabled) return { updated: false as const, reason: 'not_connected' as const }
+  const { provider, calendarId } = await ensureExternalCalendar(db, connection)
+  const { data: missionData, error: missionError } = await db
+    .from('camino_calendar')
+    .select('id, user_id, scheduled_date, subject, title, block_key, block_slug, mission_type, status, start_time, end_time, updated_at, metadata')
+    .eq('user_id', userId)
+    .eq('id', missionId)
+    .maybeSingle()
+  if (missionError) throw missionError
+  const mission = missionData as CaminoMissionRow | null
+  if (!mission || mission.status !== 'pending') return { updated: false as const, reason: 'missing_mission' as const }
+  const { data: linkData, error: linkError } = await db
+    .from('calendar_event_links')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('provider', 'google')
+    .eq('entity_type', 'mission')
+    .eq('entity_id', mission.id)
+    .maybeSingle()
+  if (linkError) throw linkError
+  const link = linkData as CalendarEventLink | null
+  const eventInput = eventFromMission(mission)
+  if (!eventInput) {
+    if (link?.external_event_id) {
+      await provider.deleteEvent(link.external_calendar_id, link.external_event_id)
+      const { error: deleteLinkError } = await db.from('calendar_event_links').delete().eq('id', link.id)
+      if (deleteLinkError) throw deleteLinkError
+    }
+    await db.from('camino_calendar').update({
+      metadata: mergeMetadata(mission.metadata, { calendar_synced: false, calendar_sync_status: 'pending_no_time' }),
+    }).eq('id', mission.id).eq('user_id', userId)
+    return { updated: false as const, reason: 'no_time' as const }
+  }
+  try {
+    let event: CalendarEvent
+    if (link?.external_event_id) {
+      try {
+        event = await provider.updateEvent(link.external_calendar_id, link.external_event_id, eventInput)
+      } catch (error) {
+        if (!(error instanceof CalendarEventNotFoundError)) throw error
+        event = await createOrRecoverMissionEvent(provider, calendarId, eventInput)
+      }
+    } else {
+      event = await createOrRecoverMissionEvent(provider, calendarId, eventInput)
+    }
+    const { error: upsertError } = await db.from('calendar_event_links').upsert({
       user_id: userId,
       entity_type: 'mission',
       entity_id: mission.id,
@@ -265,73 +365,69 @@ export async function syncKairoMissionsToGoogle(userId: string, db = createServi
       last_synced_at: nowISO(),
       sync_status: 'synced',
     }, { onConflict: 'user_id,entity_type,entity_id,provider' })
-    await db.from('camino_calendar').update({
-      metadata: mergeMetadata(mission.metadata, { calendar_synced: true }),
-      updated_at: mission.updated_at ?? nowISO(),
-    }).eq('id', mission.id).eq('user_id', userId)
-    pushed++
-  }
-  await db.from('calendar_connections').update({ last_synced_at: nowISO() }).eq('id', connection.id)
-  return { pushed, skippedNoTime, failed }
-}
-
-export async function syncExistingKairoMissionToGoogle(userId: string, missionId: string, db = createServiceClient()) {
-  const connection = await getConnection(db, userId)
-  if (!connection || !connection.sync_enabled) return { updated: false as const, reason: 'not_connected' as const }
-  const { provider } = await ensureExternalCalendar(db, connection)
-  const { data: missionData, error: missionError } = await db
-    .from('camino_calendar')
-    .select('id, user_id, scheduled_date, subject, title, block_key, block_slug, mission_type, status, start_time, end_time, updated_at, metadata')
-    .eq('user_id', userId)
-    .eq('id', missionId)
-    .maybeSingle()
-  if (missionError) throw missionError
-  const mission = missionData as CaminoMissionRow | null
-  if (!mission || mission.status !== 'pending') return { updated: false as const, reason: 'missing_mission' as const }
-  const eventInput = eventFromMission(mission)
-  if (!eventInput) {
-    await db.from('camino_calendar').update({
-      metadata: mergeMetadata(mission.metadata, { calendar_synced: false, calendar_sync_status: 'pending_no_time' }),
-    }).eq('id', mission.id).eq('user_id', userId)
-    return { updated: false as const, reason: 'no_time' as const }
-  }
-  const { data: linkData, error: linkError } = await db
-    .from('calendar_event_links')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('provider', 'google')
-    .eq('entity_type', 'mission')
-    .eq('entity_id', mission.id)
-    .maybeSingle()
-  if (linkError) throw linkError
-  const link = linkData as CalendarEventLink | null
-  if (!link?.external_event_id) {
-    await db.from('camino_calendar').update({
-      metadata: mergeMetadata(mission.metadata, { calendar_synced: false, calendar_sync_status: 'pending' }),
-    }).eq('id', mission.id).eq('user_id', userId)
-    return { updated: false as const, reason: 'no_existing_link' as const }
-  }
-  try {
-    const event = await provider.updateEvent(link.external_calendar_id, link.external_event_id, eventInput)
-    await db.from('calendar_event_links').update({
-      external_etag: event.etag ?? null,
-      last_local_update: mission.updated_at ?? nowISO(),
-      last_external_update: event.updated ?? nowISO(),
-      last_sync_source: 'kairo',
-      last_synced_at: nowISO(),
-      sync_status: 'synced',
-    }).eq('id', link.id)
+    if (upsertError) throw upsertError
     await db.from('camino_calendar').update({
       metadata: mergeMetadata(mission.metadata, { calendar_synced: true, calendar_sync_status: 'synced' }),
       updated_at: mission.updated_at ?? nowISO(),
     }).eq('id', mission.id).eq('user_id', userId)
-    return { updated: true as const }
+    return { updated: true as const, created: !link?.external_event_id }
   } catch (error) {
     await db.from('camino_calendar').update({
       metadata: mergeMetadata(mission.metadata, { calendar_synced: false, calendar_sync_status: 'error' }),
     }).eq('id', mission.id).eq('user_id', userId)
     throw error
   }
+}
+
+async function createOrRecoverMissionEvent(provider: CalendarProvider, calendarId: string, eventInput: CalendarEventInput) {
+  try {
+    return await provider.createEvent(calendarId, eventInput)
+  } catch (error) {
+    if (!(error instanceof CalendarProviderError) || error.status !== 409 || !eventInput.id) throw error
+    const existing = await provider.getEvent(calendarId, eventInput.id)
+    if (!existing) throw error
+    return provider.updateEvent(calendarId, eventInput.id, eventInput)
+  }
+}
+
+export async function deleteKairoMission(userId: string, missionId: string, db = createServiceClient()) {
+  const { data: mission, error: missionError } = await db
+    .from('camino_calendar')
+    .select('id')
+    .eq('id', missionId)
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (missionError) throw missionError
+  if (!mission) return { deleted: true as const, external: 'missing' as const }
+
+  const { data: linkData, error: linkError } = await db
+    .from('calendar_event_links')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('provider', 'google')
+    .eq('entity_type', 'mission')
+    .eq('entity_id', missionId)
+    .maybeSingle()
+  if (linkError) throw linkError
+  const link = linkData as CalendarEventLink | null
+  const connection = await getConnection(db, userId)
+  let external: 'deleted' | 'not_linked' | 'disconnected' = link ? 'disconnected' : 'not_linked'
+  if (link?.external_event_id && connection?.sync_enabled) {
+    const provider = await providerForConnection(db, connection)
+    await provider.deleteEvent(link.external_calendar_id, link.external_event_id)
+    external = 'deleted'
+  }
+  if (link) {
+    const { error } = await db.from('calendar_event_links').delete().eq('id', link.id)
+    if (error) throw error
+  }
+  const { error: deleteMissionError } = await db
+    .from('camino_calendar')
+    .delete()
+    .eq('id', missionId)
+    .eq('user_id', userId)
+  if (deleteMissionError) throw deleteMissionError
+  return { deleted: true as const, external }
 }
 
 async function applyExternalEvent(db: SupabaseClient, connection: CalendarConnection, event: CalendarEvent) {

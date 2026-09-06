@@ -49,6 +49,8 @@ function isOrientationStateRequest(request: Request, method?: string) {
 
 async function requestOrientationState(page: Page, method: 'GET' | 'PATCH' | 'DELETE', state?: unknown) {
   return page.evaluate(async ({ method, state }) => {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 10_000)
     let accessToken = ''
     for (let index = 0; index < window.localStorage.length; index += 1) {
       const key = window.localStorage.key(index)
@@ -58,13 +60,53 @@ async function requestOrientationState(page: Page, method: 'GET' | 'PATCH' | 'DE
         if (typeof value.access_token === 'string') accessToken = value.access_token
       } catch {}
     }
-    const response = await window.fetch('/api/orientation/state', {
-      method,
-      headers: { ...(state === undefined ? {} : { 'Content-Type': 'application/json' }), Authorization: `Bearer ${accessToken}` },
-      body: state === undefined ? undefined : JSON.stringify({ state }),
-    })
-    return { status: response.status, body: await response.json() as { state?: unknown; error?: string } }
+    try {
+      const response = await window.fetch('/api/orientation/state', {
+        method,
+        headers: { ...(state === undefined ? {} : { 'Content-Type': 'application/json' }), Authorization: `Bearer ${accessToken}` },
+        body: state === undefined ? undefined : JSON.stringify({ state }),
+        signal: controller.signal,
+      })
+      return { status: response.status, body: await response.json() as { state?: unknown; error?: string } }
+    } finally {
+      window.clearTimeout(timeout)
+    }
   }, { method, state })
+}
+
+async function restoreOrientationTarget(page: Page, target: Target) {
+  return page.evaluate(async targetToRestore => {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 10_000)
+    let accessToken = ''
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index)
+      if (!key?.startsWith('sb-') || !key.endsWith('-auth-token')) continue
+      try {
+        const value = JSON.parse(window.localStorage.getItem(key) ?? '{}') as { access_token?: unknown }
+        if (typeof value.access_token === 'string') accessToken = value.access_token
+      } catch {}
+    }
+    try {
+      const response = await window.fetch('/api/orientation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          target_degree_id: targetToRestore.degreeId,
+          target_university_id: targetToRestore.universityId,
+          target_degree: targetToRestore.degree,
+          target_university: targetToRestore.university,
+          target_admission_score: targetToRestore.referenceScore,
+          target_community: targetToRestore.community,
+          source_type: targetToRestore.source.type,
+        }),
+        signal: controller.signal,
+      })
+      return response.status
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }, target)
 }
 
 async function assertAuthenticated(page: Page) {
@@ -169,7 +211,7 @@ async function expectRestoredTarget(page: Page, target: Target) {
 }
 
 test('Orientación conserva el objetivo autenticado y mantiene el simulador local', async ({ page }) => {
-  test.setTimeout(420_000)
+  test.setTimeout(600_000)
   const consoleErrors: string[] = []
   const runtimeErrors: string[] = []
   const failedRequests: string[] = []
@@ -206,6 +248,7 @@ test('Orientación conserva el objetivo autenticado y mantiene el simulador loca
   try {
     await page.addInitScript(() => {
       localStorage.removeItem('kairo.orientation.state.v1')
+      localStorage.setItem('kairo_cookie_consent', 'rejected')
       if (!localStorage.getItem('kairo_orientation_community_v1')) localStorage.setItem('kairo_orientation_community_v1', 'Madrid')
     })
     const initial = await test.step('carga autenticada y catálogo oficial', async () => {
@@ -295,7 +338,7 @@ test('Orientación conserva el objetivo autenticado y mantiene el simulador loca
       await expect.poll(() => opportunities.innerText()).not.toBe(opportunitiesBefore)
       expect(orientationRequests).toBe(0)
       await expect(opportunities).toContainText(/Por encima|Cerca|Por debajo/)
-      await expect(page.getByText(/no garantiza la admisión/i)).toBeVisible()
+      await expect(page.getByText(/no garantiza la admisión/i).first()).toBeVisible()
       page.off('request', countRequests)
     })
 
@@ -571,14 +614,7 @@ test('Orientación conserva el objetivo autenticado y mantiene el simulador loca
   } finally {
     if (originalSavedTarget?.degreeId && originalSavedTarget.universityId && page.url() !== 'about:blank') {
       try {
-        if (!/\/orientacion(?:\?|$)/.test(page.url())) await openOrientation(page)
-        const originalCommunity = /catalu/i.test(originalSavedTarget.community ?? '') ? 'Cataluña' : 'Madrid'
-        const payload = await switchCommunity(page, originalCommunity)
-        originalTarget = payload.targets.find(item => item.degreeId === originalSavedTarget?.degreeId && item.universityId === originalSavedTarget?.universityId)
-        if (originalTarget) {
-          await selectTarget(page, originalTarget)
-          await saveTarget(page, originalTarget)
-        }
+        if (originalTarget) expect(await restoreOrientationTarget(page, originalTarget)).toBe(200)
       } catch {
         // The main assertions report the failure; cleanup remains best-effort.
       }

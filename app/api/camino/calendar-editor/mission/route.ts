@@ -3,7 +3,7 @@ import { createServiceClient } from '@/app/lib/billing/supabase'
 import { getAuthContext } from '@/app/lib/camino/caminoProgressServer'
 import { normalizeSubjectSlug, sanitizeLessonTitle } from '@/app/lib/camino/caminoCurriculumPlan'
 import { getAvailabilityForDate, hasTimeConflict } from '@/app/lib/calendar/availability'
-import { syncKairoMissionsToGoogle } from '@/app/lib/calendar/sync'
+import { deleteKairoMission, syncExistingKairoMissionToGoogle, syncKairoMissionsToGoogle } from '@/app/lib/calendar/sync'
 import { DEFAULT_MISSION_DURATION_MINUTES } from '@/app/lib/camino/calendarEditorConfig'
 
 export const dynamic = 'force-dynamic'
@@ -125,7 +125,17 @@ export async function POST(request: NextRequest) {
     if (existingError) throw existingError
 
     if (existing?.id) {
-      return NextResponse.json({ ok: true, duplicate: true, mission: existing, calendarSync: existing.start_time && existing.end_time ? 'already_scheduled' : 'pending_no_time' })
+      let calendarSync = existing.start_time && existing.end_time ? 'pending' : 'pending_no_time'
+      if (existing.start_time && existing.end_time) {
+        try {
+          const result = await syncExistingKairoMissionToGoogle(auth.user.id, existing.id, db)
+          calendarSync = result.updated ? 'synced' : result.reason
+        } catch (error) {
+          console.warn('[camino/calendar-editor/mission] duplicate google retry failed', error)
+          calendarSync = 'error'
+        }
+      }
+      return NextResponse.json({ ok: true, duplicate: true, mission: existing, calendarSync })
     }
 
     const { data: sameDayRows, error: sameDayError } = requestedStartTime && requestedEndTime
@@ -207,8 +217,8 @@ export async function POST(request: NextRequest) {
     let calendarSync = startTime && endTime ? 'pending' : 'pending_no_time'
     if (startTime && endTime) {
       try {
-        await syncKairoMissionsToGoogle(auth.user.id, db)
-        calendarSync = 'attempted'
+        const result = await syncKairoMissionsToGoogle(auth.user.id, db)
+        calendarSync = (result.failed ?? 0) > 0 ? 'error' : 'synced'
       } catch (error) {
         console.warn('[camino/calendar-editor/mission] google sync skipped', error)
         await db
@@ -229,5 +239,23 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[camino/calendar-editor/mission]', error)
     return NextResponse.json({ error: 'No se pudo guardar la misión.' }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await getAuthContext(request)
+    if ('response' in auth) return auth.response
+
+    let body: Record<string, unknown> = {}
+    try { body = await request.json() } catch { /* handled below */ }
+    const missionId = cleanString(body.missionId, 80)
+    if (!missionId) return NextResponse.json({ error: 'mission_id_required' }, { status: 400 })
+
+    const result = await deleteKairoMission(auth.user.id, missionId)
+    return NextResponse.json({ ok: true, ...result })
+  } catch (error) {
+    console.error('[camino/calendar-editor/mission/delete]', error)
+    return NextResponse.json({ error: 'No se pudo eliminar la misión. Reintentar.' }, { status: 502 })
   }
 }

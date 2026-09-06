@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { CalendarSyncGoneError, type BusySlot, type CalendarChangePage, type CalendarEvent, type CalendarEventInput, type CalendarProvider, type WatchChannel } from './types'
+import { CalendarAuthError, CalendarEventNotFoundError, CalendarProviderError, CalendarSyncGoneError, type BusySlot, type CalendarChangePage, type CalendarEvent, type CalendarEventInput, type CalendarProvider, type WatchChannel } from './types.ts'
 
 const GOOGLE_API = 'https://www.googleapis.com/calendar/v3'
 
@@ -11,7 +11,7 @@ type GoogleTokenResponse = {
   scope?: string
 }
 
-async function googleFetch<T>(accessToken: string, path: string, init: RequestInit = {}): Promise<T> {
+async function googleFetch<T>(accessToken: string, path: string, init: RequestInit = {}, allowNotFound = false): Promise<T> {
   const res = await fetch(`${GOOGLE_API}${path}`, {
     ...init,
     headers: {
@@ -20,11 +20,14 @@ async function googleFetch<T>(accessToken: string, path: string, init: RequestIn
       ...(init.headers ?? {}),
     },
   })
-  if (res.status === 404) return null as T
+  if (res.status === 401) throw new CalendarAuthError()
+  if (res.status === 404) {
+    if (allowNotFound) return null as T
+    throw new CalendarEventNotFoundError()
+  }
   if (res.status === 410) throw new CalendarSyncGoneError()
   if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Google Calendar error ${res.status}: ${text.slice(0, 300)}`)
+    throw new CalendarProviderError(res.status)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
@@ -113,40 +116,58 @@ export async function getGoogleAccountEmail(accessToken: string): Promise<string
 
 export class GoogleCalendarProvider implements CalendarProvider {
   id = 'google' as const
+  private accessToken: string
+  private readonly refreshAccessToken?: () => Promise<string>
 
-  constructor(private accessToken: string) {}
+  constructor(
+    accessToken: string,
+    refreshAccessToken?: () => Promise<string>,
+  ) {
+    this.accessToken = accessToken
+    this.refreshAccessToken = refreshAccessToken
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}, allowNotFound = false): Promise<T> {
+    try {
+      return await googleFetch<T>(this.accessToken, path, init, allowNotFound)
+    } catch (error) {
+      if (!(error instanceof CalendarAuthError) || !this.refreshAccessToken) throw error
+      this.accessToken = await this.refreshAccessToken()
+      return googleFetch<T>(this.accessToken, path, init, allowNotFound)
+    }
+  }
 
   createCalendar(summary: string, timeZone: string) {
-    return googleFetch<{ id: string; summary?: string }>(this.accessToken, '/calendars', {
+    return this.request<{ id: string; summary?: string }>('/calendars', {
       method: 'POST',
       body: JSON.stringify({ summary, timeZone }),
     })
   }
 
   getCalendar(calendarId: string) {
-    return googleFetch<{ id: string; summary?: string } | null>(this.accessToken, `/calendars/${encodeURIComponent(calendarId)}`)
+    return this.request<{ id: string; summary?: string } | null>(`/calendars/${encodeURIComponent(calendarId)}`, {}, true)
   }
 
   createEvent(calendarId: string, event: CalendarEventInput) {
-    return googleFetch<Record<string, unknown>>(this.accessToken, `/calendars/${encodeURIComponent(calendarId)}/events`, {
+    return this.request<Record<string, unknown>>(`/calendars/${encodeURIComponent(calendarId)}/events`, {
       method: 'POST',
       body: JSON.stringify(event),
     }).then(normalizeEvent)
   }
 
   updateEvent(calendarId: string, eventId: string, event: CalendarEventInput) {
-    return googleFetch<Record<string, unknown>>(this.accessToken, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
+    return this.request<Record<string, unknown>>(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
       method: 'PUT',
       body: JSON.stringify(event),
     }).then(normalizeEvent)
   }
 
   async deleteEvent(calendarId: string, eventId: string) {
-    await googleFetch<void>(this.accessToken, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'DELETE' })
+    await this.request<void | null>(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'DELETE' }, true)
   }
 
   getEvent(calendarId: string, eventId: string) {
-    return googleFetch<Record<string, unknown> | null>(this.accessToken, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`)
+    return this.request<Record<string, unknown> | null>(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {}, true)
       .then(event => event ? normalizeEvent(event) : null)
   }
 
@@ -154,8 +175,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
     const params = new URLSearchParams({ showDeleted: 'true', maxResults: '250' })
     if (options.syncToken) params.set('syncToken', options.syncToken)
     if (options.pageToken) params.set('pageToken', options.pageToken)
-    const json = await googleFetch<{ items?: Record<string, unknown>[]; nextPageToken?: string; nextSyncToken?: string }>(
-      this.accessToken,
+    const json = await this.request<{ items?: Record<string, unknown>[]; nextPageToken?: string; nextSyncToken?: string }>(
       `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
     )
     return {
@@ -166,7 +186,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
   }
 
   async getAvailability(calendarIds: string[], timeMin: string, timeMax: string, timeZone: string): Promise<BusySlot[]> {
-    const json = await googleFetch<{ calendars?: Record<string, { busy?: BusySlot[] }> }>(this.accessToken, '/freeBusy', {
+    const json = await this.request<{ calendars?: Record<string, { busy?: BusySlot[] }> }>('/freeBusy', {
       method: 'POST',
       body: JSON.stringify({ timeMin, timeMax, timeZone, items: calendarIds.map(id => ({ id })) }),
     })
@@ -174,7 +194,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
   }
 
   async watch(calendarId: string, webhookUrl: string, channelId: string): Promise<WatchChannel> {
-    const json = await googleFetch<{ id: string; resourceId: string; expiration?: string }>(this.accessToken, `/calendars/${encodeURIComponent(calendarId)}/events/watch`, {
+    const json = await this.request<{ id: string; resourceId: string; expiration?: string }>(`/calendars/${encodeURIComponent(calendarId)}/events/watch`, {
       method: 'POST',
       body: JSON.stringify({ id: channelId, type: 'web_hook', address: webhookUrl }),
     })
@@ -186,7 +206,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
   }
 
   async unwatch(channelId: string, resourceId: string) {
-    await googleFetch<void>(this.accessToken, '/channels/stop', {
+    await this.request<void>('/channels/stop', {
       method: 'POST',
       body: JSON.stringify({ id: channelId, resourceId }),
     })

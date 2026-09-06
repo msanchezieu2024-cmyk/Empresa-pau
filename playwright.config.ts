@@ -42,6 +42,11 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], channel: 'chrome', storageState: authState },
     },
     {
+      name: 'calendar-editor',
+      testMatch: /(^|[\\/])calendar-editor\.spec\.ts$/,
+      use: { ...devices['Desktop Chrome'], channel: 'chrome', storageState: authState },
+    },
+    {
       name: 'pricing-public',
       testMatch: /(^|[\\/])pricing\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], channel: 'chrome' },

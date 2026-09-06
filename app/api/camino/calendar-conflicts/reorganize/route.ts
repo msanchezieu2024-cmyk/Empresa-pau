@@ -169,15 +169,15 @@ export async function POST(request: NextRequest) {
 
       if (placed) {
         movedIds.push(mission.id)
-        try {
-          const result = await syncExistingKairoMissionToGoogle(auth.user.id, mission.id, db)
-          calendarSync.push({ missionId: mission.id, status: result.updated ? 'updated' : result.reason })
-        } catch (syncError) {
-          console.warn('[camino/calendar-conflicts/reorganize] google sync pending:', syncError)
-          calendarSync.push({ missionId: mission.id, status: 'error' })
-        }
       } else {
         unscheduledIds.push(mission.id)
+      }
+      try {
+        const result = await syncExistingKairoMissionToGoogle(auth.user.id, mission.id, db)
+        calendarSync.push({ missionId: mission.id, status: result.updated ? (result.created ? 'created' : 'updated') : result.reason })
+      } catch (syncError) {
+        console.warn('[camino/calendar-conflicts/reorganize] google sync pending:', syncError)
+        calendarSync.push({ missionId: mission.id, status: 'error' })
       }
     }
 

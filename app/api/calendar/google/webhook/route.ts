@@ -14,6 +14,6 @@ export async function POST(request: NextRequest) {
     return new NextResponse(null, { status: 204 })
   } catch (error) {
     console.error('[calendar/google/webhook]', error)
-    return new NextResponse(null, { status: 204 })
+    return new NextResponse(null, { status: 503 })
   }
 }

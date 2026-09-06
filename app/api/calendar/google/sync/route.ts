@@ -9,11 +9,11 @@ export async function POST(request: NextRequest) {
   const auth = await getAuthContext(request)
   if ('response' in auth) return auth.response
   try {
-    const pulled = await syncGoogleChangesForUser(auth.user.id).catch(error => {
-      console.warn('[calendar/google/sync] pull skipped:', error)
-      return { pulled: 0 }
-    })
+    const pulled = await syncGoogleChangesForUser(auth.user.id)
     const pushed = await syncKairoMissionsToGoogle(auth.user.id)
+    if ((pushed.failed ?? 0) > 0) {
+      return NextResponse.json({ ok: false, error: 'No se pudo sincronizar Google Calendar. Reintentar.', ...pulled, ...pushed }, { status: 502 })
+    }
     return NextResponse.json({ ok: true, ...pulled, ...pushed })
   } catch (error) {
     console.error('[calendar/google/sync]', error)

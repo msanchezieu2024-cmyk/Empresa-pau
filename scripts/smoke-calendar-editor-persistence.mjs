@@ -21,6 +21,9 @@ const scheduleTimeSlot = read('app/lib/camino/scheduleTimeSlot.ts')
 const conflictRoute = read('app/api/camino/calendar-conflicts/route.ts')
 const reorganizeRoute = read('app/api/camino/calendar-conflicts/reorganize/route.ts')
 const calendarSync = read('app/lib/calendar/sync.ts')
+const googleProvider = read('app/lib/calendar/google.ts')
+const googleSyncRoute = read('app/api/calendar/google/sync/route.ts')
+const googleWebhookRoute = read('app/api/calendar/google/webhook/route.ts')
 const googleCallbackRoute = read('app/api/calendar/google/callback/route.ts')
 const googleStatusRoute = read('app/api/calendar/google/status/route.ts')
 const googleConnectionClient = read('app/components/camino/GoogleCalendarConnection.tsx')
@@ -241,8 +244,8 @@ assert(
 
 assert(
   'Google Calendar watch renewal is scheduled by Vercel Cron against the real endpoint',
-  vercelConfig.includes('"path": "/api/calendar/watch-renew"') &&
-    vercelConfig.includes('"schedule": "15 */12 * * *"') &&
+    vercelConfig.includes('"path": "/api/calendar/watch-renew"') &&
+    vercelConfig.includes('"schedule": "15 0 * * *"') &&
     watchRenewRoute.includes('export async function GET(request: NextRequest)') &&
     watchRenewRoute.includes('return handleWatchRenew(request)')
 )
@@ -399,13 +402,63 @@ assert(
 )
 
 assert(
-  'calendar conflict reorganize updates existing Google events without creating duplicates',
-  reorganizeRoute.includes('syncExistingKairoMissionToGoogle(auth.user.id, mission.id, db)') &&
+  'calendar conflict reorganize updates or creates one stable Google event',
+    reorganizeRoute.includes('syncExistingKairoMissionToGoogle(auth.user.id, mission.id, db)') &&
     calendarSync.includes('export async function syncExistingKairoMissionToGoogle') &&
-    calendarSync.includes('if (!link?.external_event_id)') &&
-    calendarSync.includes("reason: 'no_existing_link'") &&
     calendarSync.includes('await provider.updateEvent(link.external_calendar_id, link.external_event_id, eventInput)') &&
-    !calendarSync.slice(calendarSync.indexOf('export async function syncExistingKairoMissionToGoogle')).includes('provider.createEvent')
+    calendarSync.includes('event = await createOrRecoverMissionEvent(provider, calendarId, eventInput)') &&
+    calendarSync.includes("onConflict: 'user_id,entity_type,entity_id,provider'")
+)
+
+assert(
+  'calendar editor persists removals and exposes its final save action',
+  client.includes("method: 'DELETE'") &&
+    client.includes('const removedIds = calendar') &&
+    client.includes("body: JSON.stringify({ missionId })") &&
+    client.includes('onClick={handleSave}') &&
+    client.includes("'Guardar cambios'") &&
+    route.includes('export async function DELETE(request: NextRequest)') &&
+    route.includes('deleteKairoMission(auth.user.id, missionId)') &&
+    calendarSync.includes('export async function deleteKairoMission') &&
+    calendarSync.includes('await provider.deleteEvent(link.external_calendar_id, link.external_event_id)')
+)
+
+assert(
+  'Google update recreation is restricted to a confirmed missing external event',
+  googleProvider.includes('throw new CalendarEventNotFoundError()') &&
+    calendarSync.includes('if (!(error instanceof CalendarEventNotFoundError)) throw error') &&
+    calendarSync.includes('function stableGoogleEventId(missionId: string)') &&
+    calendarSync.includes('id: stableGoogleEventId(mission.id)') &&
+    calendarSync.includes('error.status !== 409') &&
+    calendarSync.includes('return provider.updateEvent(calendarId, eventInput.id, eventInput)') &&
+    !calendarSync.includes('} catch {\n      try {\n        event = await provider.createEvent')
+)
+
+assert(
+  'Google 401 refresh is retried once while rate and network failures remain visible',
+  googleProvider.includes('error instanceof CalendarAuthError') &&
+    googleProvider.includes('this.accessToken = await this.refreshAccessToken()') &&
+    googleProvider.includes('throw new CalendarProviderError(res.status)') &&
+    googleSyncRoute.includes('if ((pushed.failed ?? 0) > 0)') &&
+    googleSyncRoute.includes("{ status: 502 }") &&
+    googleWebhookRoute.includes("{ status: 503 }")
+)
+
+assert(
+  'missions without a real time remove stale Google events instead of inventing a slot',
+  calendarSync.includes('if (!eventInput)') &&
+    calendarSync.includes("calendar_sync_status: 'pending_no_time'") &&
+    calendarSync.includes("db.from('calendar_event_links').delete().eq('id', link.id)") &&
+    calendarSync.includes("start: { dateTime: start, timeZone: MADRID_TZ }") &&
+    !calendarSync.includes('date: mission.scheduled_date')
+)
+
+assert(
+  'calendar save reports sync failure and keeps an explicit retry path',
+  client.includes("const syncResponse = await fetch('/api/calendar/google/sync'") &&
+    client.includes("Guardado en Kairo. No se pudo sincronizar con Google Calendar · Reintentar") &&
+    client.includes("saveState === 'error' ? 'Reintentar'") &&
+    googleConnectionClient.includes('No se pudo comprobar Google Calendar · Reintentar')
 )
 
 assert(

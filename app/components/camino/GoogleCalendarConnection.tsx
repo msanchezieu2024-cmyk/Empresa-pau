@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { CalendarDays, Check, ChevronDown, Link2, Loader2, X } from 'lucide-react'
 import { supabase } from '@/app/lib/supabase'
@@ -14,21 +14,43 @@ export default function GoogleCalendarConnection() {
   const [loading, setLoading] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [message, setMessage] = useState('')
+  const [statusError, setStatusError] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    void refreshStatus()
-    const params = new URLSearchParams(window.location.search)
-    const calendarResult = params.get('calendar')
-    if (calendarResult === 'connected') setMessage('Google Calendar conectado')
-    if (calendarResult === 'cancelled') setMessage('Conexión cancelada')
-    if (calendarResult === 'error') setMessage('No se ha podido conectar. Reintentar')
-    if (calendarResult) {
-      params.delete('calendar')
-      const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`
-      window.history.replaceState({}, '', next)
-    }
+  const getToken = useCallback(async () => {
+    const session = await supabase.auth.getSession()
+    return session.data.session?.access_token ?? null
   }, [])
+
+  const refreshStatus = useCallback(async (token?: string | null) => {
+    const accessToken = token ?? await getToken()
+    if (!accessToken) return
+    try {
+      const res = await fetch('/api/calendar/google/status', { headers: { Authorization: `Bearer ${accessToken}` } })
+      if (!res.ok) throw new Error('status_failed')
+      setStatus(await res.json() as CalendarStatus)
+      setStatusError(false)
+    } catch {
+      setStatusError(true)
+    }
+  }, [getToken])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void refreshStatus()
+      const params = new URLSearchParams(window.location.search)
+      const calendarResult = params.get('calendar')
+      if (calendarResult === 'connected') setMessage('Google Calendar conectado')
+      if (calendarResult === 'cancelled') setMessage('Conexión cancelada')
+      if (calendarResult === 'error') setMessage('No se ha podido conectar. Reintentar')
+      if (calendarResult) {
+        params.delete('calendar')
+        const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`
+        window.history.replaceState({}, '', next)
+      }
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [refreshStatus])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -38,22 +60,6 @@ export default function GoogleCalendarConnection() {
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [menuOpen])
-
-  async function getToken() {
-    const session = await supabase.auth.getSession()
-    return session.data.session?.access_token ?? null
-  }
-
-  async function refreshStatus(token?: string | null) {
-    const accessToken = token ?? await getToken()
-    if (!accessToken) return
-    try {
-      const res = await fetch('/api/calendar/google/status', { headers: { Authorization: `Bearer ${accessToken}` } })
-      if (res.ok) setStatus(await res.json() as CalendarStatus)
-    } catch {
-      // Silent: calendar is an enhancement, Camino still works without it.
-    }
-  }
 
   async function connect() {
     setLoading(true)
@@ -148,6 +154,11 @@ export default function GoogleCalendarConnection() {
         <span style={{ fontSize: 11, fontWeight: 750, color: message.startsWith('No') ? '#dc2626' : '#16a34a', whiteSpace: 'nowrap' }}>
           {message}
         </span>
+      )}
+      {statusError && (
+        <button type="button" onClick={() => void refreshStatus()} style={{ border: 0, background: 'transparent', color: '#dc2626', fontSize: 11, fontWeight: 800, cursor: 'pointer', padding: 0 }}>
+          No se pudo comprobar Google Calendar · Reintentar
+        </button>
       )}
     </div>
   )

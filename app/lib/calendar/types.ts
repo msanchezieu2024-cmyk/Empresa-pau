@@ -57,3 +57,27 @@ export class CalendarSyncGoneError extends Error {
     this.name = 'CalendarSyncGoneError'
   }
 }
+
+export class CalendarAuthError extends Error {
+  constructor() {
+    super('Google Calendar authorization expired')
+    this.name = 'CalendarAuthError'
+  }
+}
+
+export class CalendarEventNotFoundError extends Error {
+  constructor() {
+    super('Google Calendar event no longer exists')
+    this.name = 'CalendarEventNotFoundError'
+  }
+}
+
+export class CalendarProviderError extends Error {
+  readonly status: number
+
+  constructor(status: number) {
+    super(`Google Calendar request failed (${status})`)
+    this.name = 'CalendarProviderError'
+    this.status = status
+  }
+}

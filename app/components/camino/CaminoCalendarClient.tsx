@@ -3505,7 +3505,7 @@ function CalendarEditorOverlay({ calendar, weekStartISO, exams, subjects, curric
           }),
         }),
       })
-      const payload = await response.json().catch(() => null) as { ok?: boolean; mission?: CaminoCalRow; error?: string; code?: string; conflictType?: 'kairo' | 'external'; suggestedStart?: string | null } | null
+      const payload = await response.json().catch(() => null) as { ok?: boolean; mission?: CaminoCalRow; error?: string; code?: string; conflictType?: 'kairo' | 'external'; suggestedStart?: string | null; calendarSync?: string } | null
       if (!response.ok || !payload?.ok || !payload.mission?.id) {
         if (payload?.code === 'TIME_CONFLICT') {
           setEditorNotice(`${payload.conflictType === 'external' ? 'Ese horario coincide con un evento de tu calendario.' : 'Ese horario ya está ocupado.'}${payload.suggestedStart ? ` Siguiente hueco disponible: ${payload.suggestedStart}.` : ''}`)
@@ -3530,7 +3530,12 @@ function CalendarEditorOverlay({ calendar, weekStartISO, exams, subjects, curric
       const updatedDraft = draft.map(day => day.date === effective.day ? { ...day, missions: [...day.missions, persistedMission] } : day)
       setDraft(updatedDraft)
       onPersist(updatedDraft)
-      setSaveState('saved')
+      if (payload.calendarSync === 'error') {
+        setEditorNotice('Guardado en Kairo. No se pudo sincronizar con Google Calendar · Reintentar')
+        setSaveState('error')
+      } else {
+        setSaveState('saved')
+      }
     } catch {
       setSaveState('error')
       setEditorNotice('No se ha podido guardar. Reintentar.')
@@ -3556,6 +3561,20 @@ function CalendarEditorOverlay({ calendar, weekStartISO, exams, subjects, curric
         return
       }
       const userId = session.user.id
+
+      const draftRowIds = new Set(draft.flatMap(day => day.missions.flatMap(mission => mission.calendarRowId ? [mission.calendarRowId] : [])))
+      const editorWeekEnd = toISO(addDays(dateFromISO(editorWeekStart), 6))
+      const removedIds = calendar
+        .filter(day => day.date >= editorWeekStart && day.date <= editorWeekEnd)
+        .flatMap(day => day.missions.flatMap(mission => mission.calendarRowId && !draftRowIds.has(mission.calendarRowId) ? [mission.calendarRowId] : []))
+      for (const missionId of removedIds) {
+        const response = await fetch('/api/camino/calendar-editor/mission', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ missionId }),
+        })
+        if (!response.ok) throw new Error('calendar_editor_delete_failed')
+      }
 
       // UPDATE missions that already exist in DB
       const toUpdate = draft.flatMap(day =>
@@ -3696,49 +3715,45 @@ function CalendarEditorOverlay({ calendar, weekStartISO, exams, subjects, curric
           })
       )
 
-      if (insertEntries.length === 0) {
-        setSaveState('saved')
-        await new Promise(resolve => setTimeout(resolve, 250))
-        onSave(draft)
-        const hasTimedMission = toUpdate.some(({ start_time, end_time }) => start_time && end_time)
-        if (hasTimedMission) fetch('/api/calendar/google/sync', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        }).catch(() => undefined)
+      let updatedDraft = draft
+      if (insertEntries.length > 0) {
+        const { data: inserted, error: insertError } = await supabase
+          .from('camino_calendar')
+          .insert(insertEntries.map(e => e.row))
+          .select('id, start_time, end_time')
+        if (insertError) throw insertError
+
+        // Map returned IDs back to draft missions by insertion order.
+        const idMap = new Map<string, string>()
+        if (inserted) {
+          insertEntries.forEach((entry, i) => {
+            if (inserted[i]?.id) idMap.set(entry.missionId, inserted[i].id)
+          })
+        }
+        updatedDraft = draft.map(day => ({
+          ...day,
+          missions: day.missions.map(m => {
+            if (m.calendarRowId) return m
+            const newId = idMap.get(m.id)
+            return newId ? { ...m, calendarRowId: newId } : m
+          }),
+        }))
+      }
+      onPersist(updatedDraft)
+
+      const syncResponse = await fetch('/api/calendar/google/sync', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const syncPayload = await syncResponse.json().catch(() => null) as { ok?: boolean; failed?: number } | null
+      if (!syncResponse.ok || !syncPayload?.ok || (syncPayload.failed ?? 0) > 0) {
+        setSaveState('error')
+        setEditorNotice('Guardado en Kairo. No se pudo sincronizar con Google Calendar · Reintentar')
         return
       }
-
-      const { data: inserted, error: insertError } = await supabase
-        .from('camino_calendar')
-        .insert(insertEntries.map(e => e.row))
-        .select('id, start_time, end_time')
-      if (insertError) throw insertError
-
-      // Map returned IDs back to draft missions by insertion order
-      const idMap = new Map<string, string>()
-      if (inserted) {
-        insertEntries.forEach((entry, i) => {
-          if (inserted[i]?.id) idMap.set(entry.missionId, inserted[i].id)
-        })
-      }
-
-      const updatedDraft = draft.map(day => ({
-        ...day,
-        missions: day.missions.map(m => {
-          if (m.calendarRowId) return m
-          const newId = idMap.get(m.id)
-          return newId ? { ...m, calendarRowId: newId } : m
-        }),
-      }))
       setSaveState('saved')
       await new Promise(resolve => setTimeout(resolve, 250))
       onSave(updatedDraft)
-      const hasTimedMission = insertEntries.some(({ row }) => row.start_time && row.end_time)
-        || toUpdate.some(({ start_time, end_time }) => start_time && end_time)
-      if (hasTimedMission) fetch('/api/calendar/google/sync', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      }).catch(() => undefined)
     } catch {
       setSaveState('error')
       setEditorNotice('No se ha podido guardar. Reintentar.')
@@ -4132,6 +4147,9 @@ function CalendarEditorOverlay({ calendar, weekStartISO, exams, subjects, curric
           <p className="text-[11px] font-bold text-slate-400">{mainMissionCount} misiones principales · {bonusMissions.length} bonus opcionales</p>
           <div className="flex gap-2">
             <button onClick={onClose} className="rounded-lg border border-[#e2e8f0] bg-white px-5 py-2.5 text-[12px] font-black text-slate-500 transition hover:bg-slate-50">Cancelar</button>
+            <button type="button" onClick={handleSave} disabled={saveState === 'saving'} className="rounded-lg bg-[#0f172a] px-5 py-2.5 text-[12px] font-black text-white transition hover:bg-slate-800 disabled:opacity-60">
+              {saveState === 'saving' ? 'Guardando...' : saveState === 'saved' ? '✓ Guardado' : saveState === 'error' ? 'Reintentar' : 'Guardar cambios'}
+            </button>
           </div>
         </footer>
 
