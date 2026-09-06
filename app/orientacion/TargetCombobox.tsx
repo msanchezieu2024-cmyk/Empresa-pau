@@ -108,7 +108,7 @@ export default function TargetCombobox({ targets, selectedId, selectedDegreeKey,
         </div>
       ) : (
         <div className={styles.chosenDegree}>
-          <div><small>1 · GRADO</small><strong>{selectedGroup.name}</strong><span>{selectedGroup.offerings.length === 1 ? '1 oferta oficial' : `${selectedGroup.offerings.length} ofertas oficiales`}</span></div>
+          <div><strong>{selectedGroup.name}</strong><span>{selectedGroup.offerings.length === 1 ? '1 oferta oficial' : `${selectedGroup.offerings.length} ofertas oficiales`}</span></div>
           <button type="button" onClick={changeDegree}><ArrowLeft size={14} /> Cambiar grado</button>
         </div>
       )}
@@ -125,7 +125,7 @@ export default function TargetCombobox({ targets, selectedId, selectedDegreeKey,
               return (
                 <button type="button" role="option" aria-selected={offer.id === selectedId} data-degree-id={offer.degreeId ?? ''} data-university-id={offer.universityId ?? ''} key={offer.id} onClick={() => onSelect(offer.id)}>
                   <span><strong>{offer.universityAcronym ?? offer.university}</strong><small>{offer.university}</small>{detail && <small className={styles.offerCampus}>{detail}</small>}</span>
-                  <span className={styles.resultReference}><small><ShieldCheck size={11} /> NOTA REFERENCIA</small><b>{offer.referenceScore.toLocaleString('es-ES', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</b>{offer.id === selectedId && <Check size={15} />}</span>
+                  <span className={styles.resultReference}><small title="Nota de referencia oficial"><ShieldCheck size={14} /><span className={styles.srOnly}>Nota de referencia</span></small><b>{offer.referenceScore.toLocaleString('es-ES', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</b>{offer.id === selectedId && <Check size={15} />}</span>
                 </button>
               )
             })}
@@ -136,8 +136,8 @@ export default function TargetCombobox({ targets, selectedId, selectedDegreeKey,
 
       {selected && (
         <div className={styles.selectedTarget}>
-          <div className={styles.selectedTargetIcon}><Check size={17} /></div>
-          <div><small>Oferta seleccionada</small><strong>{selected.degree}</strong><span>{selected.universityAcronym ? `${selected.universityAcronym} · ` : ''}{selected.university}</span></div>
+          <div className={styles.selectedTargetIcon}><Check size={16} /></div>
+          <div><strong>{selected.degree}</strong><span>{selected.universityAcronym ? `${selected.universityAcronym} · ` : ''}{selected.university}</span></div>
           <div className={styles.selectedScore}><small>Referencia {selected.source.academicYear}</small><b>{selected.referenceScore.toLocaleString('es-ES', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</b></div>
         </div>
       )}

@@ -40,7 +40,7 @@ export default function UniversityExplorer({ targets, estimatedScore, loadState,
   return (
     <section className={styles.explorer} aria-labelledby="explorer-title">
       <div className={styles.explorerHero}>
-        <div><span className={styles.eyebrow}><GraduationCap size={14} /> Catálogo oficial</span><h2 id="explorer-title">Encuentra grados que encajan contigo</h2><p>Filtra {targets.length} referencias por universidad, nota y materias que ponderan 0,2.</p></div>
+        <div><h2 id="explorer-title">Encuentra grados que encajan contigo</h2><p>Filtra {targets.length} referencias por universidad, nota y materias que ponderan 0,2.</p></div>
         <div className={styles.currentEstimate}><span>Con tu nota actual</span><strong>{estimatedScore === null ? 'Pendiente' : <>{formatGrade(estimatedScore)} <small>/ 14</small></>}</strong><small>{estimatedScore === null ? 'Completa tu vía en Mi objetivo' : 'El orden y la situación cambian en vivo'}</small></div>
       </div>
 

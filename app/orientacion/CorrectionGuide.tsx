@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { BookOpenCheck, Check, ChevronDown, Clock3, ExternalLink, FileCheck2, ShieldCheck, Sparkles } from 'lucide-react'
+import { Check, ChevronDown, Clock3, ExternalLink, FileCheck2, ShieldCheck, Sparkles } from 'lucide-react'
 import type { OfficialCriterion } from './data'
 import type { OrientationCommunity } from './community'
 import { CATALUNYA_GENERAL_CORRECTION_GUIDE, CATALUNYA_OFFICIAL_EXAM_GUIDES, GENERAL_CORRECTION_GUIDE, OFFICIAL_EXAM_GUIDES } from './exam-guides'
@@ -17,7 +17,7 @@ export default function CorrectionGuide({ community, databaseCriteria }: { commu
 
   return (
     <section className={styles.correctionGuide} aria-labelledby="correction-title">
-      <div className={styles.correctionHero}><div><span className={styles.eyebrow}><BookOpenCheck size={14} /> Documentación verificada</span><h2 id="correction-title">Cómo se corrige de verdad</h2><p>Primero el criterio oficial. Después, la traducción práctica de Kairo.</p></div><div className={styles.officialSeal}><ShieldCheck size={20} /><span><b>Fuentes oficiales</b><small>PAU {community} · 2026</small></span></div></div>
+      <div className={styles.correctionHero}><div><h2 id="correction-title">Cómo se corrige de verdad</h2><p>Primero el criterio oficial. Después, la traducción práctica de Kairo.</p></div><div className={styles.officialSeal}><ShieldCheck size={20} /><span><b>Fuentes oficiales</b><small>PAU {community} · 2026</small></span></div></div>
 
       <label className={styles.subjectSelector}><span>Asignatura</span><span className={styles.nativeSelectWrap}><select value={guide.id} onChange={event => setGuideId(event.target.value)}>{guides.map(item => <option key={item.id} value={item.id}>{item.subject}</option>)}</select><ChevronDown size={16} /></span></label>
 
