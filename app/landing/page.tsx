@@ -7,7 +7,7 @@ import {
 } from '@/app/lib/platformStats'
 import { getPlanPriceDisplay, getPublicPlanDefinitions } from '@/app/lib/pricing'
 import LandingAuthProvider from './LandingAuthState'
-import { NavLoginLink, BottomCta, PricingPlanCta, PricingSectionTracker, StickyMobileCta } from './LandingCta'
+import { NavLoginLink, BottomCta, HeroFreeLink, PricingPlanCta, PricingSectionTracker, StickyMobileCta } from './LandingCta'
 import { ClayHeroCta, ClayHeroMiniCards } from './LandingClayPilotHero'
 import RevealOnScroll from '@/app/components/ui/RevealOnScroll'
 import { SUBJECT_OPTS } from '@/app/lib/subjectCatalog'
@@ -303,6 +303,12 @@ export default function LandingPage() {
           <Link href="/precios" className="v4c-nav-link" style={{ fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,.5)', textDecoration: 'none', letterSpacing: '.08em', textTransform: 'uppercase' }}>
             Precios
           </Link>
+          {/* Waitlist del Curso PAU: hasta ahora la página existía pero no la
+              enlazaba nadie desde el sitio. Va en blanco pleno, no en el gris
+              de "Precios", porque es la acción que la landing quiere empujar. */}
+          <Link href="/waitlist" className="v4c-nav-link" style={{ fontSize: 11, fontWeight: 500, color: '#fff', textDecoration: 'none', letterSpacing: '.08em', textTransform: 'uppercase' }}>
+            Reserva tu plaza
+          </Link>
           <NavLoginLink />
         </div>
       </nav>
@@ -347,9 +353,12 @@ export default function LandingPage() {
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
             <ClayHeroCta />
           </div>
-          <Link href="#como-funciona" style={{ fontFamily: M, fontSize: 10, color: 'rgba(255,255,255,.35)', letterSpacing: '.12em', textTransform: 'uppercase', textDecoration: 'none', borderBottom: '1px solid rgba(255,255,255,.15)', paddingBottom: 2, display: 'inline-block' }}>
-            Ver cómo funciona
-          </Link>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+            <HeroFreeLink />
+            <Link href="#como-funciona" style={{ fontFamily: M, fontSize: 10, color: 'rgba(255,255,255,.35)', letterSpacing: '.12em', textTransform: 'uppercase', textDecoration: 'none', borderBottom: '1px solid rgba(255,255,255,.15)', paddingBottom: 2, display: 'inline-block' }}>
+              Ver cómo funciona
+            </Link>
+          </div>
         </div>
 
         {/* Mini cards — piloto claymorfismo (ver app/landing/LandingClayPilotHero.tsx) */}

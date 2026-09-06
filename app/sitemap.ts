@@ -10,7 +10,7 @@ const ROUTES: Array<{ path: string; priority: number; changeFrequency: MetadataR
   { path: '/precios',           priority: 0.9, changeFrequency: 'monthly' },
   { path: '/ayuda',             priority: 0.7, changeFrequency: 'monthly' },
   { path: '/contacto',          priority: 0.6, changeFrequency: 'yearly'  },
-  { path: '/waitlist',          priority: 0.5, changeFrequency: 'monthly' },
+  { path: '/waitlist',          priority: 0.9, changeFrequency: 'weekly'  },
   { path: '/legal/terminos',    priority: 0.3, changeFrequency: 'yearly'  },
   { path: '/legal/privacidad',  priority: 0.3, changeFrequency: 'yearly'  },
   { path: '/legal/aviso-legal', priority: 0.3, changeFrequency: 'yearly'  },

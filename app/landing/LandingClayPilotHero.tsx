@@ -43,6 +43,11 @@ const CTA_LABEL_MUTED = 'rgba(0, 0, 0, 0.45)'
 // actual del hero. No sustituye HeroCta/mini-cards originales en el código:
 // convive como componente aparte que la landing usa en su lugar mientras
 // dura el piloto.
+// Visitante anónimo: el CTA principal del hero lleva a la waitlist del Curso
+// PAU (precio early bird congelado). Con sesión activa sigue llevando al
+// Camino/onboarding como hasta ahora — quien ya es alumno no debe aterrizar en
+// una lista de espera. El acceso gratis no desaparece: vive justo debajo del
+// círculo, en HeroFreeLink (app/landing/LandingCta.tsx).
 export function ClayHeroCta() {
   const { status, href, label } = useLandingAuth()
   const { theme } = useClayThemePreference()
@@ -56,7 +61,7 @@ export function ClayHeroCta() {
   return (
     <ClayThemeScope theme={theme} style={{ background: 'transparent', display: 'inline-block' }}>
       <Link
-        href={isLoading ? '#' : href}
+        href={isLoading ? '#' : isAuthed ? href : '/waitlist'}
         aria-disabled={isLoading}
         onClick={e => { if (isLoading) e.preventDefault() }}
         className="v4c-clay-cta-circle"
@@ -91,10 +96,10 @@ export function ClayHeroCta() {
         }}
       >
         <span style={{ fontFamily: B, fontSize: 17, letterSpacing: '.06em', color: CTA_LABEL, textAlign: 'center', lineHeight: 1.1, fontWeight: isAuthed ? 700 : undefined }}>
-          {isAuthed ? label : <>Empieza<br />gratis</>}
+          {isAuthed ? label : <>Reserva<br />tu plaza</>}
         </span>
         {!isAuthed && (
-          <span style={{ fontFamily: M, fontSize: 9, color: CTA_LABEL_MUTED, letterSpacing: '.1em', textTransform: 'uppercase' }}>sin tarjeta</span>
+          <span style={{ fontFamily: M, fontSize: 9, color: CTA_LABEL_MUTED, letterSpacing: '.1em', textTransform: 'uppercase' }}>curso PAU 2027</span>
         )}
       </Link>
     </ClayThemeScope>

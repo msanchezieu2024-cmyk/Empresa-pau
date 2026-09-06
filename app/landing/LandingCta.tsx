@@ -29,6 +29,24 @@ export function NavLoginLink() {
   )
 }
 
+// Acceso gratis del hero, ahora que el CTA circular principal lleva a la
+// waitlist del Curso PAU (ver ClayHeroCta en LandingClayPilotHero.tsx). El
+// camino gratuito no desaparece de la primera pantalla: baja a un enlace de
+// texto justo debajo del círculo. Con sesión activa no se muestra — ese
+// visitante ya tiene su destino en el propio círculo.
+export function HeroFreeLink() {
+  const { status, href } = useLandingAuth()
+  if (status !== 'anon') return null
+  return (
+    <Link
+      href={href}
+      style={{ fontFamily: M, fontSize: 10, color: 'rgba(255,255,255,.55)', letterSpacing: '.12em', textTransform: 'uppercase', textDecoration: 'none', borderBottom: '1px solid rgba(255,255,255,.25)', paddingBottom: 2, display: 'inline-block' }}
+    >
+      O empieza gratis · sin tarjeta →
+    </Link>
+  )
+}
+
 export function HeroCta() {
   const { status, href, label } = useLandingAuth()
   const isAuthed = status === 'authed'
